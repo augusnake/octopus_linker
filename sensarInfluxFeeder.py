@@ -11,10 +11,10 @@ import HandlerSQL
 import InfluxDB, PostgreDB
 from time import sleep
 import datetime
+import calibration
 
 import Log
 import GLOBAL
-
 
 
 
@@ -61,6 +61,11 @@ def printInfo(iAllTable, iTimestampDict, iIterationCount):
   #print()
 
 
+def applyCalibration(iReferenceColumn, iTable):
+  data=[]
+  for aRow in iTable:
+    data.append(calibration.calib(aRow[iReferenceColumn], aRow['placed_wheel__calibration']))
+  iTable.addColumn(iReferenceColumn + "_calibrated", HandlerSQL.eColumnType.FLOAT, data)
 
 
 
@@ -115,6 +120,7 @@ def updateInfluxFromSQL(iPostgreDB, iInfluxDB, iDateTime, iIterationCount, iCurr
   
   aExtendedInputWheel = updateTableInfluxDB(aAllPostgreTable['input_wheel'], 
                                             [{'table':aExtendedPlacedWheel, 'id':'id_placed_wheel', 'prefix':'placed_wheel'}])
+  applyCalibration('min_d', aExtendedInputWheel)
   iInfluxDB.writeFlatTable(aExtendedInputWheel, iCurrentTimestamp)  
   #print(aExtendedInputWheel)
 
@@ -123,29 +129,32 @@ def updateInfluxFromSQL(iPostgreDB, iInfluxDB, iDateTime, iIterationCount, iCurr
   iInfluxDB.writeFlatTable(aExtendedInputRipper, iCurrentTimestamp)  
   #print(aExtendedInputRipper)
 
-
-  aWheelAutomaton = aExtendedInputWheel.copy()
+  aTimestamp = getTimestampFromTable(iInfluxDB, "input_wheel_automaton", 'timestamp')
+  aWheelAutomaton = iPostgreDB.fetchAll('wheel_automaton', "select * from input_wheel where timestamp > '%s'" % (aTimestamp))
   aWheelAutomaton.name = 'wheel_automaton'
-  print(aWheelAutomaton)
-
+  #print(aWheelAutomaton)
+  aTimestamp -= relativedelta(minutes=2)
   aNewColumnValue = []
   aNewColumnValueFind= []
+  aTableAutomaton = iPostgreDB.fetchAll('input_automaton', "select * from input_automaton where timestamp > '%s'" % (aTimestamp))
   aMaxTime = int(GLOBAL.config['influx']['max_time_automaton_wheel_link'])
   for aRow in aWheelAutomaton:
-    aRefRow = aAllPostgreTable['input_automaton'].getRowByTime('date_creation', aRow['date_creation'], )
-    aNewColumnValue.append(aRefRow['row']['id'])
-    aNewColumnValueFind.append(aRefRow['diff'] < aMaxTime)
+    aRefRow = aTableAutomaton.getRowByTime('date_creation', aRow['date_creation'])
+    print(aRefRow)
     if aRefRow == None:
       GLOBAL.log(Log.level.ERROR, "Unable to link input_wheel and input_automaton")
       break
+    aNewColumnValue.append(aRefRow['row']['id'])
+    aNewColumnValueFind.append(aRefRow['diff'] < aMaxTime)
+  print(aNewColumnValue)
   if None not in aNewColumnValue:
     aWheelAutomaton.addColumn('id_automaton', HandlerSQL.eColumnType.INT, aNewColumnValue)
     aWheelAutomaton.addColumn('id_automaton_found', HandlerSQL.eColumnType.BOOL, aNewColumnValueFind)
 
     aExtendedInputWheelAutomaton = updateTableInfluxDB(aWheelAutomaton, 
-                                              [{'table':aAllPostgreTable['input_automaton'], 'id':'id_automaton', 'prefix':'input_automaton'}])
+                                              [{'table':aTableAutomaton, 'id':'id_automaton', 'prefix':'input_automaton'}])
     print(aExtendedInputWheelAutomaton)
-    iInfluxDB.writeFlatTable(aExtendedInputWheelAutomaton, iCurrentTimestamp)
+    #iInfluxDB.writeFlatTable(aExtendedInputWheelAutomaton, iCurrentTimestamp)
 
 
   printInfo(aAllPostgreTable, atimeStampDict, iIterationCount)

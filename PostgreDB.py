@@ -25,9 +25,9 @@ class PostgreDB:
     self.database       = GLOBAL.config['postgre']['database']
     aUser               = GLOBAL.config['postgre']['user']
     aHost               = GLOBAL.config['postgre']['host']
-    aPort               = GLOBAL.config['postgre']['port']
+    aPort               = int(GLOBAL.config['postgre']['port'])
     aPassword           = GLOBAL.config['postgre']['password']
-    self.connector      = psycopg2.connect(database = self.database, user = aUser, host= aHost, password = aPassword, port = aPort)
+    self.connector      = psycopg2.connect(database = self.database, user = aUser, host= aHost,password = aPassword, port = aPort)
     self.cursor         = self.connector.cursor()
     self.writeCount     = 0
     self.readCount      = 0
