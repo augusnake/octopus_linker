@@ -5,7 +5,7 @@ from time import mktime
 
 from datetime import datetime, timezone
 #from influxdb_client import InfluxDBClient, Point, WritePrecision
-#from influxdb_client.client.write_api import SYNCHRONOUS, ASYNCHRONOUS
+from influxdb_client.client.write_api import SYNCHRONOUS, ASYNCHRONOUS
 import pandas
 import pyarrow
 import HandlerSQL
@@ -14,17 +14,16 @@ from enum import Enum
 import Log
 import GLOBAL
 
-
 class InfluxDB:
   def __getClient(self):
     return InfluxDBClient3(host=self.url, token=self.token, database=self.database)
 
   def __getWriteAPI(self):
-    return self.client.write_api(write_options=SYNCHRONOUS)
+    return self.client.write_api(write_options=ASYNCHRONOUS)
 
   def __getReadAPI(self):
     return self.client.query_api()
-
+ 
   def __init__(self, iURL, iDB, iToken):
     self.token          = iToken
     self.database       = iDB
@@ -36,8 +35,9 @@ class InfluxDB:
     self.readCount      = 0
     self.errorCount     = 0
     self.errorCountMax  = 3
-
     self.processTime    = 0
+    self.buffer         = []
+    self.bufferMaxSize  = 100
 
   def getAvgProcessTime(self):
     aCount = self.readCount + self.writeCount
@@ -49,22 +49,35 @@ class InfluxDB:
   def close(self):
     self.client.close()
 
+  def flush(self):
+    self.writeBuffer()
+
+  def writeBuffer(self):
+    try:
+      print("Write", len(self.buffer), "items")
+      self.client.write(self.buffer)
+    except InfluxDBError as exc:
+      self.errorCount += 1
+      if self.errorCount < self.errorCountMax:
+        GLOBAL.log(Log.level.ERROR, "Failed to write to INFLUX-DB database "+ self.database)
+        for aInput in self.buffer:
+          GLOBAL.log(Log.level.INFO , "   | > Input : \"" + aInput           + "\"")
+        GLOBAL.log(  Log.level.INFO , "   +-> Error : \"" + str(exc.message) + "\"")
+      return
+    self.buffer = []
+    
+
 
   def write(self, aInsertString):
-    #'pcb,id=1 uid="ynDvIV4RGOEBV6NejuEg",version_major=1,version_minor=0 1790869900'
     aTimerStart = time.time()
     self.writeCount += 1
     if self.dryRun:
       print("Write : ", aInsertString)
     else:
-      try:
-        self.client.write(aInsertString, write_precision=WritePrecision.MS)
-      except InfluxDBError as exc:
-        self.errorCount += 1
-        if self.errorCount < self.errorCountMax:
-          GLOBAL.log(Log.level.ERROR, "Failed to write to INFLUX-DB database "+ self.database)
-          GLOBAL.log(Log.level.INFO , "   | > Input : \"" + aInsertString    + "\"")
-          GLOBAL.log(Log.level.INFO , "   +-> Error : \"" + str(exc.message) + "\"")
+      aTimestamp = int(time.time()*1000000000)
+      self.buffer.append(aInsertString + " " + str(aTimestamp))
+      if len(self.buffer) >= self.bufferMaxSize:
+        self.writeBuffer()
     self.processTime += time.time() - aTimerStart
 
   def formatKeyValue(self, iKey, iValue, iType):
@@ -79,21 +92,17 @@ class InfluxDB:
     else:
       return str(iKey)+"=\""+str(iValue)+"\""
 
-  def writeFlatRow(self, iTable, colInfo, colType, row, iLastTimestamp):
-    item = str(iTable.name) + ' ' #+ ',str_id=' + str(row['id']) + ' '
+  def writeFlatRow(self, iTable, colInfo, colType, row):
+    item = str(iTable.name) + ' ' 
     for (key,value,typ) in zip(colInfo, row.data, colType):
       item += self.formatKeyValue(key, value, typ) + ','
     item = item[:-1]
-    #if iTable.columnExist('date_creation'):
-    #  item += ' ' + datetime.isoformat(row['date_creation'])
-    #else: 
-    item += ' ' + str(int(datetime.now().timestamp() * 1000))
     self.write(item)
 
-  def writeFlatTable(self, iTable, iLastTimestamp):
+  def writeFlatTable(self, iTable):
     for row in iTable:
-      print("%s - row %s" % (iTable.name, row['id']))
-      self.writeFlatRow(iTable, iTable.getColumnsName(), iTable.getColumnsType(), row, iLastTimestamp)
+      #print("%s - row %s" % (iTable.name, row['id']))
+      self.writeFlatRow(iTable, iTable.getColumnsName(), iTable.getColumnsType(), row)
 
   def computeColumnsInfo(self, data):
     count = 0
@@ -157,7 +166,7 @@ class InfluxDB:
     ERROR    = 2
     FATAL    = 3
   def log(self, iLevel, iText):
-    self.write("log,level=%s text=\"%s\" %s" % (iLevel.name, iText, int(datetime.now().timestamp())))
+    self.write("log,level=%s text=\"%s\"" % (iLevel.name, iText))
 
 
 
