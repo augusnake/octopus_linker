@@ -48,7 +48,7 @@ class LogInScreen:
 class LogInFile:
 
   def getFileName(self):
-    return self.path + "\\" + self.fileName + "_" + datetime.now().replace(microsecond=0).isoformat().replace(" ", "_").replace(":", "-") + ".log"
+    return self.path + "/" + self.fileName + "_" + datetime.now().replace(microsecond=0).isoformat().replace(" ", "_").replace(":", "-") + ".log"
 
   def openNewFile(self):
     try:

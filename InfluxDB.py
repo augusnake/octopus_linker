@@ -5,7 +5,7 @@ from time import mktime
 
 from datetime import datetime, timezone
 #from influxdb_client import InfluxDBClient, Point, WritePrecision
-from influxdb_client.client.write_api import SYNCHRONOUS, ASYNCHRONOUS
+#from influxdb_client.client.write_api import SYNCHRONOUS, ASYNCHRONOUS
 import pandas
 import pyarrow
 import HandlerSQL
@@ -37,7 +37,7 @@ class InfluxDB:
     self.errorCountMax  = 3
     self.processTime    = 0
     self.buffer         = []
-    self.bufferMaxSize  = 100
+    self.bufferMaxSize  = 500
 
   def getAvgProcessTime(self):
     aCount = self.readCount + self.writeCount

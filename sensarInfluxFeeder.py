@@ -2,6 +2,7 @@
 
 
 import sys
+import re
 import os, time
 import unittest
 from dateutil.relativedelta import relativedelta
@@ -19,7 +20,7 @@ import GLOBAL
 
 
 
-def missingRowsTable(iTable, influxDB):
+def missingRowsTable(iTable, influxDB: InfluxDB.InfluxDB):
   if influxDB.tableExists(iTable.name) == False:
     inf = HandlerSQL.Table([], [], [])
   else:
@@ -28,8 +29,8 @@ def missingRowsTable(iTable, influxDB):
   aIdSet = [x for x in iTable.getColumn('id') if x not in inf.getColumn('id')]
   return iTable.keepRows('id', aIdSet)
 
-def writeMissingRowsTable(iAllPostgreTable, influxDB, tableName):
-  influxDB.writeFlatTable(missingRowsTable(iAllPostgreTable[tableName], influxDB))
+def writeMissingRowsTable(iTable, influxDB: InfluxDB.InfluxDB):
+  influxDB.writeFlatTable(missingRowsTable(iTable, influxDB))
 
 
 def updateTableInfluxDB(iTable, tableExpandList):
@@ -38,18 +39,8 @@ def updateTableInfluxDB(iTable, tableExpandList):
     aTable = aTable.expandTable(iTable.name, tableExpandList[tabExIdx]['table'], tableExpandList[tabExIdx]['id'], tableExpandList[tabExIdx]['prefix'])
   return aTable
 
-def getTimestampFromTable(iInfluxDB, iTableName, iColumnName):
-  aDefaultTimestamp = datetime.datetime.now() + relativedelta(years=-6)
-  if iInfluxDB.tableExists(iTableName) == False:
-    return aDefaultTimestamp
-  aTable = iInfluxDB.read(iTableName, "select * from %s order by timestamp desc limit 1" % iTableName)
-  return aTable.get(0, iColumnName) if len(aTable) > 0 else aDefaultTimestamp
 
-def getInputInfo(iPostgreDB, iInfluxDB, iTableName, oAllTable, oTimestampDict):
-  oTimestampDict[iTableName] = getTimestampFromTable(iInfluxDB, iTableName, 'timestamp')
-  oAllTable     [iTableName] = iPostgreDB.fetchAll(iTableName, "select * from %s where timestamp > '%s'" % (iTableName, oTimestampDict[iTableName]))
-
-def printInfo(iAllTable, iTimestampDict, iIterationCount):
+def printInfo(iAllTable, iIterationCount):
   if iIterationCount == 0:
     print("%6.6s |" % "count", end="")
     for tableName in iAllTable.keys():
@@ -61,103 +52,106 @@ def printInfo(iAllTable, iTimestampDict, iIterationCount):
   #print()
 
 
-def applyCalibration(iReferenceColumn, iTable):
+def applyCalibration(iTable, iReferenceColumn, iCalibrationColumn):
   data=[]
   for aRow in iTable:
-    data.append(calibration.calib(aRow[iReferenceColumn], aRow['placed_wheel__calibration']))
-  iTable.addColumn(iReferenceColumn + "_calibrated", HandlerSQL.eColumnType.FLOAT, data)
+    data.append(calibration.calib(aRow[iReferenceColumn], aRow[iCalibrationColumn]))
+  iTable.addColumn("gauge", HandlerSQL.eColumnType.FLOAT, data)
 
+def getNewRows(iPostgreDB: PostgreDB.PostgreDB, iPostgresTable:str, iInfluxDB: InfluxDB.InfluxDB, iInfluxDBTable:str, iPostgreId:str = 'id', iInfluxId:str='id'):
+  aLastId = 0
+  if iInfluxDB.tableExists(iInfluxDBTable):
+    aExistIdTable = iInfluxDB.read(iInfluxDBTable, "SELECT MAX(%s) FROM %s" % (iInfluxId, iInfluxDBTable))
+    aLastId = aExistIdTable.getByIndex(0, 0)
+  return iPostgreDB.fetchAll(iInfluxDBTable, "SELECT * FROM %s where %s > %s" %  (iPostgresTable, iPostgreId, aLastId))
 
+def getNewRowsFromTable(iPostgresTable:HandlerSQL.Table, iInfluxDB: InfluxDB.InfluxDB, iInfluxDBTable:str):
+  aLastId = 0
+  if iInfluxDB.tableExists(iInfluxDBTable):
+    aExistIdTable = iInfluxDB.read(iInfluxDBTable, "SELECT MAX(id) FROM %s" % iInfluxDBTable)
+    aLastId = aExistIdTable.getByIndex(0, 0)
+  return iPostgresTable.whereIdhigherThan(aLastId)
 
-def updateInfluxFromSQL(iPostgreDB, iInfluxDB, iDateTime, iIterationCount):
-  aAllPostgreTable = {}
-  aAllPostgreTable["pcb"]     = iPostgreDB.fetchAll("pcb"    , "select * from pcb")
-  aAllPostgreTable["wheel"]   = iPostgreDB.fetchAll("wheel"  , "select * from wheel")
-  aAllPostgreTable["casing"]  = iPostgreDB.fetchAll("casing" , "select * from casing")
-  aAllPostgreTable["ripper"]  = iPostgreDB.fetchAll("ripper" , "select * from ripper")
-  aAllPostgreTable["stirrup"] = iPostgreDB.fetchAll("stirrup", "select * from stirrup")
+def getAllRows(iPostgreDB: PostgreDB.PostgreDB, iPostgresTable:str):
+  return iPostgreDB.fetchAll(iPostgresTable, "select * from %s" % iPostgresTable)
 
-  aAllPostgreTable["placed_wheel"]  = iPostgreDB.fetchAll("placed_wheel" , "select * from placed_wheel")
-  aAllPostgreTable["placed_ripper"] = iPostgreDB.fetchAll("placed_ripper", "select * from placed_ripper")
- 
-  writeMissingRowsTable(aAllPostgreTable, iInfluxDB, "pcb"    )
-  writeMissingRowsTable(aAllPostgreTable, iInfluxDB, "wheel"  )
-  writeMissingRowsTable(aAllPostgreTable, iInfluxDB, "casing" )
-  writeMissingRowsTable(aAllPostgreTable, iInfluxDB, "ripper" )
-  writeMissingRowsTable(aAllPostgreTable, iInfluxDB, "stirrup")
-
-  aExtendedPlacedWheel = updateTableInfluxDB(aAllPostgreTable['placed_wheel'], [
-                          {'table':aAllPostgreTable['pcb']    , 'id':'id_pcb'   , 'prefix':'pcb'},
-                          {'table':aAllPostgreTable['wheel']  , 'id':'id_wheel' , 'prefix':'wheel'},
-                          {'table':aAllPostgreTable['casing'] , 'id':'id_casing', 'prefix':'casing'},
-                          {'table':aAllPostgreTable['stirrup'], 'id':'id_stirrup', 'prefix':'stirrup'}
-                        ])
-  aExtendedPlacedWheelMissing = missingRowsTable(aExtendedPlacedWheel, iInfluxDB)
-  iInfluxDB.writeFlatTable(aExtendedPlacedWheelMissing)
-  
-  aExtendedPlacedRipper = updateTableInfluxDB(aAllPostgreTable['placed_ripper'], [
-                          {'table':aAllPostgreTable['pcb']    , 'id':'id_pcb'    , 'prefix':'pcb'},
-                          {'table':aAllPostgreTable['ripper'] , 'id':'id_ripper' , 'prefix':'ripper'},
-                          {'table':aAllPostgreTable['casing'] , 'id':'id_casing' , 'prefix':'casing'},
-                          {'table':aAllPostgreTable['stirrup'], 'id':'id_stirrup', 'prefix':'stirrup'}
-                        ])  
-  aExtendedPlacedRipperMissing = missingRowsTable(aExtendedPlacedRipper, iInfluxDB)
-  iInfluxDB.writeFlatTable(aExtendedPlacedRipperMissing)
-
-
-  atimeStampDict = {}
-  getInputInfo(iPostgreDB, iInfluxDB, "input_wheel"        , aAllPostgreTable, atimeStampDict)
-  getInputInfo(iPostgreDB, iInfluxDB, "input_ripper"       , aAllPostgreTable, atimeStampDict)
-  getInputInfo(iPostgreDB, iInfluxDB, "input_automaton"    , aAllPostgreTable, atimeStampDict)
-  getInputInfo(iPostgreDB, iInfluxDB, "input_maintenance"  , aAllPostgreTable, atimeStampDict)
-  getInputInfo(iPostgreDB, iInfluxDB, "input_radio_mesure" , aAllPostgreTable, atimeStampDict)
-
-
-  writeMissingRowsTable(aAllPostgreTable, iInfluxDB, "input_automaton"   )
-  writeMissingRowsTable(aAllPostgreTable, iInfluxDB, "input_maintenance" )
-  writeMissingRowsTable(aAllPostgreTable, iInfluxDB, "input_radio_mesure")
-  
-  aExtendedInputWheel = updateTableInfluxDB(aAllPostgreTable['input_wheel'], 
-                                            [{'table':aExtendedPlacedWheel, 'id':'id_placed_wheel', 'prefix':'placed_wheel'}])
-  applyCalibration('min_d', aExtendedInputWheel)
-  iInfluxDB.writeFlatTable(aExtendedInputWheel)  
-  #print(aExtendedInputWheel)
-
-  aExtendedInputRipper = updateTableInfluxDB(aAllPostgreTable['input_ripper'], 
-                                              [{'table':aExtendedPlacedRipper, 'id':'id_placed_ripper', 'prefix':'placed_ripper'}])
-  iInfluxDB.writeFlatTable(aExtendedInputRipper)  
-  #print(aExtendedInputRipper)
-
-  aDateTime = getTimestampFromTable(iInfluxDB, "wheel_automaton", 'timestamp')
-  aWheelAutomaton = iPostgreDB.fetchAll('wheel_automaton', "select * from input_wheel where timestamp > '%s'" % (aDateTime.isoformat()))
-
+def updateWheelAutomaton(iPostgreDB: PostgreDB.PostgreDB, iInfluxDB: InfluxDB.InfluxDB, iAllPostgreTable):
+  aWheelAutomaton = getNewRows(iPostgreDB, 'input_wheel', iInfluxDB, "wheel_automaton", 'id', 'input_wheel__id')
+  aWheelAutomaton = processExtendedTable(aWheelAutomaton, iAllPostgreTable)
+  if len(aWheelAutomaton) == 0:
+    return
+  aWheelAutomaton.prefixColumns('input_wheel__', True)
+  aDateTime = aWheelAutomaton.findLowest('input_wheel__timestamp')
   aDateTime -= relativedelta(minutes=2)
   aNewColumnValue = []
   aNewColumnValueFind= []
   aTableAutomaton = iPostgreDB.fetchAll('input_automaton', "select * from input_automaton where timestamp > '%s'" % (aDateTime.isoformat()))
   aMaxTime = int(GLOBAL.config['influx']['max_time_automaton_wheel_link'])
   for aRow in aWheelAutomaton:
-    aRefRow = aTableAutomaton.getRowByTime('date_creation', aRow['date_creation'])
+    aRefRow = aTableAutomaton.getRowByTime('timestamp', aRow['input_wheel__timestamp'])
     if aRefRow == None:
       GLOBAL.log(Log.level.ERROR, "Unable to link input_wheel and input_automaton")
       break
     aNewColumnValue.append(aRefRow['row']['id'])
-    aNewColumnValueFind.append(aRefRow['diff'] < aMaxTime)
+    aNewColumnValueFind.append(aRefRow['diff'])
   if None not in aNewColumnValue:
     aWheelAutomaton.addColumn('id_automaton', HandlerSQL.eColumnType.INT, aNewColumnValue)
-    aWheelAutomaton.addColumn('id_automaton_found', HandlerSQL.eColumnType.BOOL, aNewColumnValueFind)
+    aWheelAutomaton.addColumn('sec_diff_wheel_automaton', HandlerSQL.eColumnType.FLOAT, aNewColumnValueFind)
 
     aExtendedInputWheelAutomaton = updateTableInfluxDB(aWheelAutomaton, 
                                               [{'table':aTableAutomaton, 'id':'id_automaton', 'prefix':'input_automaton'}])
     iInfluxDB.writeFlatTable(aExtendedInputWheelAutomaton)
 
+def process(iPostgreDB: PostgreDB.PostgreDB, iInfluxDB: InfluxDB.InfluxDB, iTableStr:str, iAllTable:dict):
+  aTable = iPostgreDB.fetchAll(iTableStr, "select * from %s" % iTableStr)
+  iAllTable[iTableStr] = processExtendedTable(aTable, iAllTable)
+  writeMissingRowsTable(iAllTable[iTableStr], iInfluxDB)
 
-  printInfo(aAllPostgreTable, atimeStampDict, iIterationCount)
+def processPartial(iPostgreDB: PostgreDB.PostgreDB, iInfluxDB: InfluxDB.InfluxDB, iTableStr:str, iAllTable:dict):
+  aTable = getNewRows(iPostgreDB, iTableStr, iInfluxDB, iTableStr)
+  iAllTable[iTableStr] = processExtendedTable(aTable, iAllTable)
+  iInfluxDB.writeFlatTable(iAllTable[iTableStr])
 
 
-def insertSqlFromInflux(iPostgreDB, iInfluxDB, iTimestamp):
-  #iInfluxDB.write("input_sql,key=2 table=\"stirrup\",values=\"uid='input_sql_2',description='desc_input_sql_2'\" 1791361444")
-  #iInfluxDB.write("input_sql,key=3 table=\"casing\",values=\"arm=2,radius=2,name='naming'\" 1791361444")
+def processExtendedTable(iTable:HandlerSQL.Table, iAllTable:dict):
+  aExtendInfo = []
+  for iColName in iTable.getColumnsName():
+    aMatch = re.search('id_[a-z]+', iColName)
+    if aMatch:
+      aExtTableName = iColName[3:]
+      aExtendInfo.append({'table':iAllTable[aExtTableName], 'id':iColName, 'prefix':aExtTableName})
+  return updateTableInfluxDB(iTable, aExtendInfo)
+
+
+def updateInfluxFromSQL(iPostgreDB:PostgreDB.PostgreDB, iInfluxDB: InfluxDB.InfluxDB, iIterationCount):
+  aAllPostgreTable = {}
+  process(iPostgreDB, iInfluxDB, "pcb"    , aAllPostgreTable)
+  process(iPostgreDB, iInfluxDB, "wheel"  , aAllPostgreTable)
+  process(iPostgreDB, iInfluxDB, "casing" , aAllPostgreTable)
+  process(iPostgreDB, iInfluxDB, "ripper" , aAllPostgreTable)
+  process(iPostgreDB, iInfluxDB, "stirrup", aAllPostgreTable)
+
+  process(iPostgreDB, iInfluxDB, "placed_ripper", aAllPostgreTable)
+  process(iPostgreDB, iInfluxDB, "placed_wheel" , aAllPostgreTable)
+
+  processPartial(iPostgreDB, iInfluxDB, "input_automaton"    , aAllPostgreTable)
+  processPartial(iPostgreDB, iInfluxDB, "input_maintenance"  , aAllPostgreTable)
+  processPartial(iPostgreDB, iInfluxDB, "input_radio_mesure" , aAllPostgreTable)
+  processPartial(iPostgreDB, iInfluxDB, "input_ripper"       , aAllPostgreTable)
+
+
+  aInputWheelTable = getNewRows(iPostgreDB, "input_wheel", iInfluxDB, "input_wheel")
+  aAllPostgreTable['input_wheel'] = processExtendedTable(aInputWheelTable, aAllPostgreTable)
+  applyCalibration(aAllPostgreTable['input_wheel'], 'min_d', 'placed_wheel__calibration')
+  print(aAllPostgreTable['input_wheel'])
+  iInfluxDB.writeFlatTable(aAllPostgreTable['input_wheel'])
+
+  updateWheelAutomaton(iPostgreDB, iInfluxDB, aAllPostgreTable)
+
+  printInfo(aAllPostgreTable, iIterationCount)
+
+
+def insertSqlFromInflux(iPostgreDB, iInfluxDB: InfluxDB.InfluxDB):
   if iInfluxDB.tableExists('input_sql') == False:
     return
   aInputInfluxTable  = iInfluxDB.read('input_sql', "select * from input_sql")
@@ -172,14 +166,13 @@ def insertSqlFromInflux(iPostgreDB, iInfluxDB, iTimestamp):
       aValArray.append(aVal)
     aQueryRes = iPostgreDB.insert(aRow.get('table'), aKeyArray, aValArray)
     iPostgreDB.insert('input_user', ['id_influx', 'table_name', 'table_values', 'issue'], [aRow.get('key'), "'"+aRow.get('table')+"'", "$$"+aRow.get('values')+"$$", "$$"+aQueryRes['errorString']+"$$"])
-    #iInfluxDB.write("input_sql_execution,key=%s time_execution='%s',issue='%s'" % (aRow.get('key'), iTimestamp.isoformat(), aIssue))
 
 
 
 
 initInflux = True
 initPostgre = True
-def initDB():
+def initDB() -> tuple[PostgreDB.PostgreDB, InfluxDB.InfluxDB]:
   token = GLOBAL.config['influx']['token']
   org   = GLOBAL.config['influx']['org']
   url   = GLOBAL.config['influx']['url']
@@ -189,23 +182,21 @@ def initDB():
   return aPostgreDB, aInfluxDB
 
 
-def closeDB(iPostgreDB, iInfluxDB):
+def closeDB(iPostgreDB, iInfluxDB: InfluxDB.InfluxDB):
   if initPostgre:
     iPostgreDB.close()
   if initInflux:
     iInfluxDB.close()
 
 
-def loop(iIterationCount, iCurrentTimestamp):
+def loop(iIterationCount):
   
   s = time.time()
 
-  aDTNow = datetime.datetime.now().replace(microsecond=0)
-
   aPostgreDB, aInfluxDB = initDB()
 
-  insertSqlFromInflux(aPostgreDB, aInfluxDB, aDTNow)
-  updateInfluxFromSQL(aPostgreDB, aInfluxDB, aDTNow, iIterationCount)
+  insertSqlFromInflux(aPostgreDB, aInfluxDB)
+  updateInfluxFromSQL(aPostgreDB, aInfluxDB, iIterationCount)
   
   e = time.time()
   print("Process Time:", e - s)
@@ -214,13 +205,11 @@ def loop(iIterationCount, iCurrentTimestamp):
   aInfluxDB.writeBuffer()
   closeDB(aPostgreDB, aInfluxDB)
 
-  
-# .\influxdb3.exe create table --database "sensarInflux" --tags uid --fields id:int64,version_major:int64,version_minor:int64 pcb
 
 if __name__ == '__main__':
   GLOBAL.initLog()
   GLOBAL.log.addFunc(Log.LogInScreen())
-  GLOBAL.log.addFunc(Log.LogInFile(os.getcwd()+"\\log\\", "feeder", 1000000))
+  GLOBAL.log.addFunc(Log.LogInFile(os.getcwd()+"/log/", "feeder", 1000000))
   GLOBAL.log(Log.level.INFO, "Initialized GLOBAL : log")
 
   if len(sys.argv) != 2:
@@ -246,8 +235,8 @@ if __name__ == '__main__':
 
   aTimestamp = datetime.datetime.now()
   aIterationCount:int = 0
-  while True:
-    loop(aIterationCount, aTimestamp)
+  while not GLOBAL.config.getboolean('default','close_asap'):
+    loop(aIterationCount)
 
     aIterationCount+=1
     aTimestamp += datetime.timedelta(0, int(GLOBAL.config['default']['sleep_time_second']))
@@ -255,3 +244,6 @@ if __name__ == '__main__':
     if(aTtNow < aTimestamp):
       aSleepTime = (aTimestamp - aTtNow)
       sleep(aSleepTime.seconds + aSleepTime.microseconds/1000000)
+
+    if not GLOBAL.initConfig(sys.argv[1]):
+      break

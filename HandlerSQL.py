@@ -47,6 +47,15 @@ class ColumnInfo:
     self.type += iColumnsInfo.type
     self.position = self.__setColumnsName(self.name)
 
+  def prefix(self, iPrefix, onlyUnprefixedOne:bool = False):
+    aCount = -1
+    for aColName in self.name:
+      aCount +=1
+      if onlyUnprefixedOne and '__' in aColName:
+        continue
+      self.name[aCount] = iPrefix + aColName
+    self.position = self.__setColumnsName(self.name)
+
   def remove(self, iColumnName):
     if iColumnName in self.name:
       iColumnIndex = self.position[iColumnName]
@@ -190,6 +199,9 @@ class Table:
     
   def get(self, rowIndex, columnName):
     return self.rows[rowIndex][self.columnsInfo[columnName]]
+  
+  def getByIndex(self, rowIndex, columnIndex):
+      return self.rows[rowIndex][columnIndex]
 
   def __getitem__(self, rowIndex):
     return Row(self.name, self.columnsInfo, self.rows[rowIndex])
@@ -197,12 +209,41 @@ class Table:
   def __len__(self):
     return len(self.rows)
 
+  def prefixColumns(self, iPrefix, onlyUnprefixedOne:bool = False):
+    self.columnsInfo.prefix(iPrefix, onlyUnprefixedOne)
+
 
   def getColumn(self, iColumnName):
     return [row[iColumnName] for row in self]
 
   def columnExist(self, iColumnName):
     return iColumnName in self.columnsInfo.name
+
+  def findLowest(self, iColumnName):
+    if not self.rows:
+      return None
+    aResult = self.get(0, iColumnName)
+    for aVal in self:
+      if aResult > aVal.get(iColumnName):
+        aResult = aVal.get(iColumnName)
+    return aResult
+
+  def findHighest(self, iColumnName):
+    if not self.rows:
+      return None
+    aResult = self.get(0, iColumnName)
+    for aVal in self:
+      if aResult < aVal.get(iColumnName):
+        aResult = aVal.get(iColumnName)
+    return aResult
+
+  def whereIdhigherThan(self, iValue):
+    aTable = Table(self.name, self.columnsInfo.copy(), [])
+    for aRow in self.rows:
+      if aRow[self.columnsInfo['id']] > iValue:
+        aTable.rows.append(aRow)
+    return aTable
+
 
   def removeColumn(self, iColumnName):
     if iColumnName in self.columnsInfo.name:
@@ -236,7 +277,7 @@ class Table:
   def __str__(self):
     table = prettytable.PrettyTable(self.columnsInfo.name)
     for row in self.rows:
-        table.add_row(row)
+      table.add_row(row)
     return str(self.columnsInfo) + str(table)
 
   def keepRows(self, iColumnKey, iRowsKey):
@@ -266,3 +307,5 @@ class Table:
 
 
 TableError : Table = Table('TableError', ColumnInfo([],[]), [])
+
+
