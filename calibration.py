@@ -13,6 +13,8 @@ def calInterp(v,cald,calv):
 
 def calib(v,calib):
     C=calib.split('_')
+    if len(C) != 2:
+        return 0.0
     cal_mm = [int(x) for x in C[0].split('-')]
     cal_v = [int(x) for x in C[1].split('-')]
     return calInterp(v,cal_mm,cal_v)

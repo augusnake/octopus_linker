@@ -77,9 +77,10 @@ def getAllRows(iPostgreDB: PostgreDB.PostgreDB, iPostgresTable:str):
 
 def updateWheelAutomaton(iPostgreDB: PostgreDB.PostgreDB, iInfluxDB: InfluxDB.InfluxDB, iAllPostgreTable):
   aWheelAutomaton = getNewRows(iPostgreDB, 'input_wheel', iInfluxDB, "wheel_automaton", 'id', 'input_wheel__id')
-  aWheelAutomaton = processExtendedTable(aWheelAutomaton, iAllPostgreTable)
   if len(aWheelAutomaton) == 0:
     return
+  aWheelAutomaton = processExtendedTable(aWheelAutomaton, iAllPostgreTable) 
+  applyCalibration(aWheelAutomaton, 'min_d', 'placed_wheel__calibration')
   aWheelAutomaton.prefixColumns('input_wheel__', True)
   aDateTime = aWheelAutomaton.findLowest('input_wheel__timestamp')
   aDateTime -= relativedelta(minutes=2)
