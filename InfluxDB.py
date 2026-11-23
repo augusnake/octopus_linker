@@ -54,7 +54,7 @@ class InfluxDB:
 
   def writeBuffer(self):
     try:
-      print("Write", len(self.buffer), "items")
+      #print("Write", len(self.buffer), "items")
       self.client.write(self.buffer)
     except InfluxDBError as exc:
       self.errorCount += 1
@@ -137,9 +137,15 @@ class InfluxDB:
     aResult = []
     for rowCount in range(iData.num_rows):
       aRow = []
+      aVar = None
       for aName, aType in zip(iColumnsName, iColumnsType):
-        aRow.append(self.formatValue(aType, iData[aName][rowCount].as_py()))
-      aResult.append(aRow)
+        aVar = iData[aName][rowCount].as_py()
+        if aVar:
+          aRow.append(self.formatValue(aType, aVar))
+        else:
+          break
+      if aVar:
+        aResult.append(aRow)
     return aResult
 
   def read(self, iTableName, iQuery):
