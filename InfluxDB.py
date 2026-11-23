@@ -65,7 +65,25 @@ class InfluxDB:
         GLOBAL.log(  Log.level.INFO , "   +-> Error : \"" + str(exc.message) + "\"")
       return
     self.buffer = []
-    
+
+  def getLastId(self, iTable:str, iIdField:str):
+    if not self.tableExists(iTable):
+      return 0
+    aExistIdTable = HandlerSQL.TableEmpty
+    aCount = 0
+    aDiffClose = ""
+    aDiffFar   = "- INTERVAL '%s day'" % (aCount+1) 
+    while aExistIdTable.isEmpty():
+      aRequest = "SELECT MAX(%s) FROM %s WHERE time < now() %s AND time > now() %s" % (iIdField, iTable, aDiffClose, aDiffFar)
+      #print(aRequest)
+      aExistIdTable = self.read(iTable, aRequest)
+      aCount+=1
+      aDiffClose = aDiffFar
+      aDiffFar   = "- INTERVAL '%s day'" % (aCount+1)
+      if aCount > 100:
+        raise Exception("No data found in Influx table %s" % (iTable))
+    return aExistIdTable.getByIndex(0, 0)    
+
 
 
   def write(self, aInsertString):

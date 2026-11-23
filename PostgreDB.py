@@ -32,8 +32,6 @@ class PostgreDB:
     self.writeCount     = 0
     self.readCount      = 0
     self.processTime    = 0
-    self.errorCount     = 0
-    self.errorCountMax  = 3
     self.dryRun         = False
 
   def getAvgProcessTime(self) -> int:
@@ -61,7 +59,6 @@ class PostgreDB:
       GLOBAL.log(Log.level.ERROR, "Query failed to POSTGRE-DB database "+ self.database)
       GLOBAL.log(Log.level.INFO , "   | > Input : \"" + iQuery    + "\"")
       GLOBAL.log(Log.level.INFO , "   +-> Error : \"" + str(err.pgerror.split("\n")[0]) + "\"")
-      self.errorCount += 1
       self.processTime += time.time() - aTimerStart
       return { "errorCode": err.pgcode, "errorString" :err.pgerror}
     self.processTime += time.time() - aTimerStart
@@ -107,7 +104,12 @@ class PostgreDB:
     return HandlerSQL.ColumnInfo(aColumnsName, aColumnsType)
 
   def fetchAllUpdate(self, iTable, iTimestamp):
-    return self.fetchAll(iTable, "select * from %s where date_creation > '%s'" % (iTable, iTimestamp), True)
+    return self.fetchAll(iTable, "SELECT * FROM %s WHERE date_creation > '%s'" % (iTable, iTimestamp), True)
+
+  def fetchAllWhere(self, iTable, iCondition):
+    aRequest = "SELECT * FROM %s WHERE %s" % (iTable, iCondition)
+    #print(aRequest)
+    return self.fetchAll(iTable, aRequest)
 
 
   def fetchAll(self, iTableName, iQuery):

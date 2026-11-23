@@ -163,6 +163,9 @@ class Table:
     self.columnsInfo     = iColumnInfo
     self.rows            = iRows
 
+  def isEmpty(self):
+    return len(self.rows) == 0
+
   def copy(self): 
     return Table(self.name, self.columnsInfo.copy(), self.rows.copy())
   
@@ -280,6 +283,9 @@ class Table:
       table.add_row(row)
     return str(self.columnsInfo) + str(table)
 
+  def keepFirstRows(self, iNumberOfRows:int = 1):
+    self.rows = self.rows[:iNumberOfRows]
+
   def keepRows(self, iColumnKey, iRowsKey):
     aRows           = [i for i in self.rows if i[self.columnsInfo[iColumnKey]] in iRowsKey]
     return Table(self.name, self.columnsInfo, aRows)
@@ -307,5 +313,6 @@ class Table:
 
 
 TableError : Table = Table('TableError', ColumnInfo([],[]), [])
+TableEmpty : Table = Table('TableEmpty', ColumnInfo([],[]), [])
 
 

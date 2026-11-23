@@ -33,19 +33,19 @@ def writeMissingRowsTable(iTable, influxDB: InfluxDB.InfluxDB):
   influxDB.writeFlatTable(missingRowsTable(iTable, influxDB))
 
 
-def updateTableInfluxDB(iTable, tableExpandList):
+def updateTableInfluxDB(iTable, iTableExpandList):
   aTable = iTable
-  for tabExIdx in range(len(tableExpandList)):
-    aTable = aTable.expandTable(iTable.name, tableExpandList[tabExIdx]['table'], tableExpandList[tabExIdx]['id'], tableExpandList[tabExIdx]['prefix'])
+  for tabExIdx in range(len(iTableExpandList)):
+    aTable = aTable.expandTable(iTable.name, iTableExpandList[tabExIdx]['table'], iTableExpandList[tabExIdx]['id'], iTableExpandList[tabExIdx]['prefix'])
   return aTable
 
 
 def printInfo(iAllTable, iIterationCount):
-  if iIterationCount == 0:
+  if (iIterationCount % 30) == 0:
     print("%6.6s |" % "count", end="")
     for tableName in iAllTable.keys():
       print("%12.12s |" % tableName, end="")
-    print()
+    print(' processTime')
   print("%6.6s |" % str(iIterationCount), end="")
   for tableName in iAllTable.keys():
     print("%12.12s |" % len(iAllTable[tableName]), end="")
@@ -58,36 +58,32 @@ def applyCalibration(iTable, iReferenceColumn, iCalibrationColumn):
     data.append(calibration.calib(aRow[iReferenceColumn], aRow[iCalibrationColumn]))
   iTable.addColumn("gauge", HandlerSQL.eColumnType.FLOAT, data)
 
-def getNewRows(iPostgreDB: PostgreDB.PostgreDB, iPostgresTable:str, iInfluxDB: InfluxDB.InfluxDB, iInfluxDBTable:str, iPostgreId:str = 'id', iInfluxId:str='id'):
-  aLastId = 0
-  if iInfluxDB.tableExists(iInfluxDBTable):
-    aExistIdTable = iInfluxDB.read(iInfluxDBTable, "SELECT MAX(%s) FROM %s" % (iInfluxId, iInfluxDBTable))
-    aLastId = aExistIdTable.getByIndex(0, 0)
-  return iPostgreDB.fetchAll(iInfluxDBTable, "SELECT * FROM %s where %s > %s" %  (iPostgresTable, iPostgreId, aLastId))
 
-def getNewRowsFromTable(iPostgresTable:HandlerSQL.Table, iInfluxDB: InfluxDB.InfluxDB, iInfluxDBTable:str):
-  aLastId = 0
-  if iInfluxDB.tableExists(iInfluxDBTable):
-    aExistIdTable = iInfluxDB.read(iInfluxDBTable, "SELECT MAX(id) FROM %s" % iInfluxDBTable)
-    aLastId = aExistIdTable.getByIndex(0, 0)
-  return iPostgresTable.whereIdhigherThan(aLastId)
+def getNewRowsFromTable(iPostgresDB:PostgreDB.PostgreDB, iPostgreTable:str, iInfluxDB: InfluxDB.InfluxDB, iInfluxDBTable:str, iInfluxId:str='id'):
+  aId = iInfluxDB.getLastId(iInfluxDBTable, iInfluxId)
+  aTable = iPostgresDB.fetchAllWhere(iPostgreTable, "%s > %s" % ('id', aId))
+  aTable.name = iInfluxDBTable
+  return aTable
+
 
 def getAllRows(iPostgreDB: PostgreDB.PostgreDB, iPostgresTable:str):
   return iPostgreDB.fetchAll(iPostgresTable, "select * from %s" % iPostgresTable)
 
 def updateWheelAutomaton(iPostgreDB: PostgreDB.PostgreDB, iInfluxDB: InfluxDB.InfluxDB, iAllPostgreTable):
-  aWheelAutomaton = getNewRows(iPostgreDB, 'input_wheel', iInfluxDB, "wheel_automaton", 'id', 'input_wheel__id')
+  aWheelAutomaton = getNewRowsFromTable(iPostgreDB, 'input_wheel', iInfluxDB, "wheel_automaton", 'input_wheel__id')
   if len(aWheelAutomaton) == 0:
     return
+  aDateTime = aWheelAutomaton.findLowest('timestamp')
+  aDateTime -= relativedelta(minutes=5)
+  aTableAutomaton = iPostgreDB.fetchAll('input_automaton', "SELECT * FROM input_automaton WHERE timestamp > '%s' ORDER BY timestamp DESC" % (aDateTime.isoformat()))
+  if len(aTableAutomaton) == 0 and aTableAutomaton.findHighest('timestamp') < aWheelAutomaton.findHighest('timestamp'):
+    return
+  #print("Wheel_automaton :", len(aWheelAutomaton))
   aWheelAutomaton = processExtendedTable(aWheelAutomaton, iAllPostgreTable) 
   applyCalibration(aWheelAutomaton, 'min_d', 'placed_wheel__calibration')
   aWheelAutomaton.prefixColumns('input_wheel__', True)
-  aDateTime = aWheelAutomaton.findLowest('input_wheel__timestamp')
-  aDateTime -= relativedelta(minutes=2)
   aNewColumnValue = []
   aNewColumnValueFind= []
-  aTableAutomaton = iPostgreDB.fetchAll('input_automaton', "select * from input_automaton where timestamp > '%s'" % (aDateTime.isoformat()))
-  aMaxTime = int(GLOBAL.config['influx']['max_time_automaton_wheel_link'])
   for aRow in aWheelAutomaton:
     aRefRow = aTableAutomaton.getRowByTime('timestamp', aRow['input_wheel__timestamp'])
     if aRefRow == None:
@@ -109,7 +105,7 @@ def process(iPostgreDB: PostgreDB.PostgreDB, iInfluxDB: InfluxDB.InfluxDB, iTabl
   writeMissingRowsTable(iAllTable[iTableStr], iInfluxDB)
 
 def processPartial(iPostgreDB: PostgreDB.PostgreDB, iInfluxDB: InfluxDB.InfluxDB, iTableStr:str, iAllTable:dict):
-  aTable = getNewRows(iPostgreDB, iTableStr, iInfluxDB, iTableStr)
+  aTable = getNewRowsFromTable(iPostgreDB, iTableStr, iInfluxDB, iTableStr)
   iAllTable[iTableStr] = processExtendedTable(aTable, iAllTable)
   iInfluxDB.writeFlatTable(iAllTable[iTableStr])
 
@@ -141,10 +137,10 @@ def updateInfluxFromSQL(iPostgreDB:PostgreDB.PostgreDB, iInfluxDB: InfluxDB.Infl
   processPartial(iPostgreDB, iInfluxDB, "input_ripper"       , aAllPostgreTable)
 
 
-  aInputWheelTable = getNewRows(iPostgreDB, "input_wheel", iInfluxDB, "input_wheel")
+  aInputWheelTable = getNewRowsFromTable(iPostgreDB, "input_wheel", iInfluxDB, "input_wheel")
   aAllPostgreTable['input_wheel'] = processExtendedTable(aInputWheelTable, aAllPostgreTable)
   applyCalibration(aAllPostgreTable['input_wheel'], 'min_d', 'placed_wheel__calibration')
-  print(aAllPostgreTable['input_wheel'])
+  #print(aAllPostgreTable['input_wheel'])
   iInfluxDB.writeFlatTable(aAllPostgreTable['input_wheel'])
 
   updateWheelAutomaton(iPostgreDB, iInfluxDB, aAllPostgreTable)
@@ -192,17 +188,18 @@ def closeDB(iPostgreDB, iInfluxDB: InfluxDB.InfluxDB):
 
 def loop(iIterationCount):
   
-  s = time.time()
+  aChronoBegin = time.time()
 
   aPostgreDB, aInfluxDB = initDB()
 
   insertSqlFromInflux(aPostgreDB, aInfluxDB)
   updateInfluxFromSQL(aPostgreDB, aInfluxDB, iIterationCount)
-  
-  e = time.time()
-  print("Process Time:", e - s)
+
+  aChronoEnd = time.time()
+  aChronoDiff = aChronoEnd - aChronoBegin
+  print("%10.4f"% aChronoDiff)
   aInfluxDB.write("stat process_time_ms=%si,influx_read=%si,influx_write=%si,influx_process_time_ms=%si,postgre_read=%si,postgre_write=%si,postgre_process_time_ms=%si"
-                  % (int((e - s)*1000), aInfluxDB.readCount, aInfluxDB.writeCount, int(aInfluxDB.processTime*1000), aPostgreDB.readCount, aPostgreDB.writeCount, int(aPostgreDB.processTime*1000)))
+                  % (int((aChronoDiff)*1000), aInfluxDB.readCount, aInfluxDB.writeCount, int(aInfluxDB.processTime*1000), aPostgreDB.readCount, aPostgreDB.writeCount, int(aPostgreDB.processTime*1000)))
   aInfluxDB.writeBuffer()
   closeDB(aPostgreDB, aInfluxDB)
 
@@ -221,17 +218,16 @@ if __name__ == '__main__':
     exit(2)
   GLOBAL.log(Log.level.INFO, "Initialized GLOBAL : config")
 
-  GLOBAL.log(Log.level.INFO, "Hello world of log !")
-  suite = unittest.defaultTestLoader.discover(
-    start_dir="test",
-    pattern="HandlerSQL_test.py"
-  )
-  result = unittest.TextTestRunner().run(suite)
-  if not result.wasSuccessful():
-      raise SystemExit(1)
-  GLOBAL.log(Log.level.INFO, "Unit test passed successfully")
-  GLOBAL.log(Log.level.WARNING, "Unit test passed successfully")
-  GLOBAL.log(Log.level.ERROR, "Unit test passed successfully")
+  aRunTest = False
+  if aRunTest:
+    suite = unittest.defaultTestLoader.discover(
+      start_dir="test",
+      pattern="HandlerSQL_test.py"
+    )
+    result = unittest.TextTestRunner().run(suite)
+    if not result.wasSuccessful():
+        raise SystemExit(1)
+    GLOBAL.log(Log.level.INFO, "Unit test passed successfully")
 
 
   aTimestamp = datetime.datetime.now()
