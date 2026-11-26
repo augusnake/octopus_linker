@@ -76,7 +76,7 @@ def updateWheelAutomaton(iPostgreDB: PostgreDB.PostgreDB, iInfluxDB: InfluxDB.In
   aDateTime = aWheelAutomaton.findLowest('timestamp')
   aDateTime -= relativedelta(minutes=5)
   aTableAutomaton = iPostgreDB.fetchAll('input_automaton', "SELECT * FROM input_automaton WHERE timestamp > '%s' ORDER BY timestamp DESC" % (aDateTime.isoformat()))
-  if len(aTableAutomaton) == 0 and aTableAutomaton.findHighest('timestamp') < aWheelAutomaton.findHighest('timestamp'):
+  if len(aTableAutomaton) == 0 or aTableAutomaton.findHighest('timestamp') < aWheelAutomaton.findHighest('timestamp'):
     return
   #print("Wheel_automaton :", len(aWheelAutomaton))
   aWheelAutomaton = processExtendedTable(aWheelAutomaton, iAllPostgreTable) 
@@ -205,18 +205,23 @@ def loop(iIterationCount):
 
 
 if __name__ == '__main__':
+  if len(sys.argv) != 2:
+    print("Python script take only one argument, config file path, given : %s" % ("\"".join(sys.argv)))
+    exit(1)
+
+  instanceName = os.path.splitext(os.path.basename(sys.argv[1]))[0]
+
   GLOBAL.initLog()
   GLOBAL.log.addFunc(Log.LogInScreen())
-  GLOBAL.log.addFunc(Log.LogInFile(os.getcwd()+"/log/", "feeder", 1000000))
-  GLOBAL.log(Log.level.INFO, "Initialized GLOBAL : log")
+  GLOBAL.log(Log.level.INFO, "Initialized GLOBAL : log screen")
 
-  if len(sys.argv) != 2:
-    Log.input(Log.level.FATAL, "Python script take only one argument, config file path, given : %s" % ("\"".join(sys.argv)))
-    exit(1)
 
   if not GLOBAL.initConfig(sys.argv[1]):
     exit(2)
   GLOBAL.log(Log.level.INFO, "Initialized GLOBAL : config")
+  GLOBAL.log.addFunc(Log.LogInFile(GLOBAL.config['default']['log_directory'], instanceName, 1000000))
+  GLOBAL.log(Log.level.INFO, "Initialized GLOBAL : log file")
+
 
   aRunTest = False
   if aRunTest:

@@ -28,14 +28,6 @@ class LogClass:
     for aFunc in self.call:
       aFunc(iType, iString)
 
-#def init():
-#  global aGlobalLog
-#  aGlobalLog = LogClass()
-
-#def input(iType, iString):
-#  aGlobalLog(iType, iString)
-
-
 
 class LogInScreen:
 
@@ -62,7 +54,6 @@ class LogInFile:
     
 
   def __init__(self, iPath, iFileName, iMaxSize):
-    os.makedirs(iPath, exist_ok=True)
     self.path = iPath 
     self.fileName = iFileName
     self.size = iMaxSize
